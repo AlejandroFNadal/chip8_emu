@@ -2,11 +2,13 @@ use log::trace;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[derive(PartialEq, Eq)]
 enum InstType {
     Store = 6,
     Add = 7,
     StoreMemAddr = 0xA,
     Draw = 0xD,
+    SetDelayTimer = 0xF15,
 }
 impl InstType {
     fn from_u8(i: u8) -> InstType {
@@ -14,6 +16,7 @@ impl InstType {
             6 => InstType::Store,
             7 => InstType::Add,
             0xA => InstType::StoreMemAddr,
+            0xD => InstType::Draw,
             _ => panic!("{}", format!("Unknown Instruction {}", i)),
         }
     }
@@ -100,9 +103,9 @@ struct DrawInstruction {
     x: u8,
     y: u8,
     register_ref: Rc<RefCell<[u8; 16]>>,
-    i_ref: Rc<RefCell<u16>>,
-    display: Rc<RefCell<[[bool; 63]; 31]>>,
-    ram: Rc<RefCell<[[u8; 4096]]>>,
+    mem_register: Rc<RefCell<u16>>,
+    screen: Rc<RefCell<[[bool; 63]; 31]>>,
+    ram: Rc<RefCell<[u8; 4096]>>,
 }
 
 fn u8_to_8_bools(input: u8) -> [bool; 8] {
@@ -116,17 +119,53 @@ fn u8_to_8_bools(input: u8) -> [bool; 8] {
 }
 impl DrawInstruction {
     fn draw(&mut self) {
-        let mut ram = self.ram.borrow_mut();
+        // TODO: wrap around display behavior and VF flag
+        let ram: [u8; 4096] = *self.ram.borrow();
         let sprite_len: usize = self.sprite_bytes.into();
-        let mem_pos: usize = self.i_ref.borrow().to_owned().into();
+        let mem_pos: usize = self.mem_register.borrow().to_owned().into();
         let sprite = &ram[mem_pos..mem_pos + sprite_len];
-        let screen = self.display.borrow_mut();
-        /*
-        for elem in sprite{
-            for subelem in
-            screen[self.x][self.y]
+        let mut screen = self.screen.borrow_mut();
+        for elem in sprite {
+            let mut y_shift: usize = 0;
+            for pixel in u8_to_8_bools(*elem as u8) {
+                // pixels are added to the screen with XOR
+                screen[self.x as usize][self.y as usize + y_shift] ^= pixel;
+                y_shift += 1;
+            }
         }
-        */
+    }
+}
+
+impl Instruction for DrawInstruction {
+    fn execute(&mut self) -> () {
+        self.draw()
+    }
+    fn to_string(&self) -> String {
+        let mem_register = self.mem_register.borrow();
+        format!(
+            "Draw from pos x {}, y {}, {} many bytes from memory, starting from mempos {}",
+            self.x, self.y, self.sprite_bytes, *mem_register,
+        )
+    }
+}
+
+struct SetTimer {
+    timer: Rc<RefCell<u8>>,
+    val: u8,
+}
+
+impl SetTimer {
+    fn set(&mut self) {
+        let mut timer = *self.timer.borrow_mut();
+        timer = self.val;
+    }
+}
+impl Instruction for SetTimer {
+    fn execute(&mut self) -> () {
+        self.set();
+    }
+    fn to_string(&self) -> String {
+        format!("Setting val: {} to timer", self.val)
     }
 }
 
@@ -134,29 +173,45 @@ pub fn instruction_parser<'a>(
     raw_data: (u8, u8),
     register_ref: Rc<RefCell<[u8; 16]>>,
     mem_register: Rc<RefCell<u16>>,
+    screen: Rc<RefCell<[[bool; 63]; 31]>>,
+    ram: Rc<RefCell<[u8; 4096]>>,
+    timer: Rc<RefCell<u8>>,
 ) -> Box<dyn Instruction + 'a> {
     let first_nibble = (raw_data.0 & 0xF0) >> 4;
     trace!("First nibble with trace {:x}", first_nibble);
     let second_nibble = raw_data.0 & 0x0F;
     let third_nibble = (raw_data.1 & 0xF0) >> 4;
     let fourth_nibble = raw_data.1 & 0x0F;
-    let inst_type = InstType::from_u8(first_nibble);
-    match inst_type {
-        InstType::Store => Box::new(StoreInstruction {
+    match (first_nibble, second_nibble, third_nibble, fourth_nibble) {
+        (0x6, _, _, _) => Box::new(StoreInstruction {
             target: second_nibble,
             val: third_nibble + fourth_nibble,
             register_ref,
         }) as Box<dyn Instruction + 'a>,
-        InstType::Add => Box::new(AddInstruction {
+        (0x07, _, _, _) => Box::new(AddInstruction {
             target: second_nibble,
             val: third_nibble + fourth_nibble,
             register_ref,
         }) as Box<dyn Instruction + 'a>,
-        InstType::StoreMemAddr => Box::new(StoreMemAddrInstruction {
+        (0xA, _, _, _) => Box::new(StoreMemAddrInstruction {
             i_ref: mem_register,
             val: ((third_nibble << 4) + fourth_nibble).try_into().unwrap(),
         }),
-        _ => panic!("Unknown instruction"),
+        (0xD, _, _, _) => Box::new(DrawInstruction {
+            x: second_nibble,
+            y: third_nibble,
+            sprite_bytes: fourth_nibble,
+            register_ref,
+            mem_register,
+            screen,
+            ram,
+        }) as Box<dyn Instruction + 'a>,
+        (0xF, _, 0x1, 0x5) => {
+            let reg = register_ref.borrow();
+            let val = reg[second_nibble as usize];
+            return Box::new(SetTimer { val, timer }) as Box<dyn Instruction + 'a>;
+        }
+        (_, _, _, _) => panic!("IDK"),
     }
 }
 
