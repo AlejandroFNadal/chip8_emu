@@ -169,6 +169,34 @@ impl Instruction for SetTimer {
     }
 }
 
+struct JumpIfNotEqual {
+    program_counter: Rc<RefCell<u16>>,
+    register_val: u8,
+    val: u8,
+    register_pos: u8,
+}
+
+impl JumpIfNotEqual {
+    fn jump_if_not_eq(&self) {
+        if self.register_val != self.val {
+            let mut pc = *self.program_counter.borrow_mut();
+            pc += 2
+        }
+    }
+}
+
+impl Instruction for JumpIfNotEqual {
+    fn execute(&mut self) -> () {
+        self.jump_if_not_eq();
+    }
+    fn to_string(&self) -> String {
+        format!(
+            "Jump if reg {} is different than {}",
+            self.register_pos, self.val
+        )
+    }
+}
+
 pub fn instruction_parser<'a>(
     raw_data: (u8, u8),
     register_ref: Rc<RefCell<[u8; 16]>>,
@@ -176,6 +204,7 @@ pub fn instruction_parser<'a>(
     screen: Rc<RefCell<[[bool; 63]; 31]>>,
     ram: Rc<RefCell<[u8; 4096]>>,
     timer: Rc<RefCell<u8>>,
+    program_counter: Rc<RefCell<u16>>,
 ) -> Box<dyn Instruction + 'a> {
     let first_nibble = (raw_data.0 & 0xF0) >> 4;
     trace!("First nibble with trace {:x}", first_nibble);
@@ -211,7 +240,16 @@ pub fn instruction_parser<'a>(
             let val = reg[second_nibble as usize];
             return Box::new(SetTimer { val, timer }) as Box<dyn Instruction + 'a>;
         }
-        (_, _, _, _) => panic!("IDK"),
+        (4, _, _, _) => Box::new(JumpIfNotEqual {
+            val: (third_nibble << 4) + fourth_nibble,
+            register_pos: second_nibble,
+            register_val: (register_ref.borrow())[second_nibble as usize],
+            program_counter,
+        }),
+        (_, _, _, _) => panic!(
+            "Inst Unknown {} {} {} {}",
+            first_nibble, second_nibble, third_nibble, fourth_nibble
+        ),
     }
 }
 

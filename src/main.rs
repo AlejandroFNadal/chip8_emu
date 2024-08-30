@@ -8,7 +8,7 @@ extern crate env_logger;
 struct Chip8 {
     registers: Rc<RefCell<[u8; 16]>>,
     mem_addr: Rc<RefCell<u16>>, // memory address register
-    program_counter: u16,
+    program_counter: Rc<RefCell<u16>>,
     stack_pointer: u8,
     stack: [u16; 16],
     screen: Rc<RefCell<[[bool; 63]; 31]>>,
@@ -22,7 +22,7 @@ impl Chip8 {
         Chip8 {
             registers: Rc::new(RefCell::new([0; 16])),
             mem_addr: Rc::new(RefCell::new(0)),
-            program_counter: 0,
+            program_counter: Rc::new(RefCell::new(0)),
             stack_pointer: 0,
             stack: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             screen: Rc::new(RefCell::new([[false; 63]; 31])),
@@ -89,6 +89,7 @@ fn main() {
             chip8.screen.clone(),
             chip8.ram.clone(),
             chip8.timer.clone(),
+            chip8.program_counter.clone(),
         ));
     }
     chip8.print_display();
