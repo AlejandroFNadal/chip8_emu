@@ -77,10 +77,6 @@ fn main() {
     let raw_instructions = chip8
         .load_instructions("./roms/zero.ch8".to_string())
         .unwrap();
-    println!(
-        "First instruction in raw format is {:?}",
-        raw_instructions[0]
-    );
     for i in 0..raw_instructions.len() {
         chip8.program.push(instruction_parser(
             raw_instructions[i],
@@ -91,6 +87,7 @@ fn main() {
             chip8.timer.clone(),
             chip8.program_counter.clone(),
         ));
+        println!("{}", chip8.program.last().unwrap().to_string());
     }
     chip8.print_display();
 }

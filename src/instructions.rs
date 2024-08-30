@@ -197,9 +197,49 @@ impl Instruction for JumpIfNotEqual {
     }
 }
 
+struct AddRegisters {
+    registers: Rc<RefCell<[u8; 16]>>,
+    xpos: usize,
+    ypos: usize,
+}
+
+impl AddRegisters {
+    fn add(&self) {
+        let mut registers = *self.registers.borrow_mut();
+        let result: u16 = (registers[self.xpos] + registers[self.ypos]).into();
+        if result > 255 {
+            registers[15] = 1;
+        }
+        registers[self.xpos] = result as u8;
+    }
+}
+
+impl Instruction for AddRegisters {
+    fn execute(&mut self) -> () {
+        self.add()
+    }
+    fn to_string(&self) -> String {
+        format!("Adding regs {} {}", self.xpos, self.ypos)
+    }
+}
+
+struct Jump {
+    program_counter: Rc<RefCell<u16>>,
+    val: u16,
+}
+impl Instruction for Jump {
+    fn execute(&mut self) -> () {
+        let mut pc = *self.program_counter.borrow_mut();
+        pc = self.val;
+    }
+    fn to_string(&self) -> String {
+        format!("Writing {} to PC", self.val)
+    }
+}
+
 pub fn instruction_parser<'a>(
     raw_data: (u8, u8),
-    register_ref: Rc<RefCell<[u8; 16]>>,
+    registers: Rc<RefCell<[u8; 16]>>,
     mem_register: Rc<RefCell<u16>>,
     screen: Rc<RefCell<[[bool; 63]; 31]>>,
     ram: Rc<RefCell<[u8; 4096]>>,
@@ -212,15 +252,30 @@ pub fn instruction_parser<'a>(
     let third_nibble = (raw_data.1 & 0xF0) >> 4;
     let fourth_nibble = raw_data.1 & 0x0F;
     match (first_nibble, second_nibble, third_nibble, fourth_nibble) {
+        (1, _, _, _) => Box::new(Jump {
+            program_counter,
+            val: ((second_nibble as u16) << 8) + (third_nibble << 4) as u16 + fourth_nibble as u16,
+        }) as Box<dyn Instruction + 'a>,
+        (4, _, _, _) => Box::new(JumpIfNotEqual {
+            val: (third_nibble << 4) + fourth_nibble,
+            register_pos: second_nibble,
+            register_val: (registers.borrow())[second_nibble as usize],
+            program_counter,
+        }) as Box<dyn Instruction + 'a>,
         (0x6, _, _, _) => Box::new(StoreInstruction {
             target: second_nibble,
             val: third_nibble + fourth_nibble,
-            register_ref,
+            register_ref: registers,
         }) as Box<dyn Instruction + 'a>,
         (0x07, _, _, _) => Box::new(AddInstruction {
             target: second_nibble,
             val: third_nibble + fourth_nibble,
-            register_ref,
+            register_ref: registers,
+        }) as Box<dyn Instruction + 'a>,
+        (0x08, _, _, 4) => Box::new(AddRegisters {
+            registers,
+            xpos: second_nibble as usize,
+            ypos: third_nibble as usize,
         }) as Box<dyn Instruction + 'a>,
         (0xA, _, _, _) => Box::new(StoreMemAddrInstruction {
             i_ref: mem_register,
@@ -230,22 +285,16 @@ pub fn instruction_parser<'a>(
             x: second_nibble,
             y: third_nibble,
             sprite_bytes: fourth_nibble,
-            register_ref,
+            register_ref: registers,
             mem_register,
             screen,
             ram,
         }) as Box<dyn Instruction + 'a>,
         (0xF, _, 0x1, 0x5) => {
-            let reg = register_ref.borrow();
+            let reg = registers.borrow();
             let val = reg[second_nibble as usize];
             return Box::new(SetTimer { val, timer }) as Box<dyn Instruction + 'a>;
         }
-        (4, _, _, _) => Box::new(JumpIfNotEqual {
-            val: (third_nibble << 4) + fourth_nibble,
-            register_pos: second_nibble,
-            register_val: (register_ref.borrow())[second_nibble as usize],
-            program_counter,
-        }),
         (_, _, _, _) => panic!(
             "Inst Unknown {} {} {} {}",
             first_nibble, second_nibble, third_nibble, fourth_nibble
