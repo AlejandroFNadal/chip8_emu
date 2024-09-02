@@ -1,4 +1,4 @@
-use log::trace;
+use log::{trace, STATIC_MAX_LEVEL};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -237,6 +237,20 @@ impl Instruction for Jump {
     }
 }
 
+struct CleanScreen {
+    screen: Rc<RefCell<[[bool; 63]; 31]>>,
+}
+
+impl Instruction for CleanScreen {
+    fn execute(&mut self) -> () {
+        let mut screen = *self.screen.borrow_mut();
+        screen = [[false; 63]; 31];
+    }
+    fn to_string(&self) -> String {
+        "Clear screen".to_string()
+    }
+}
+
 pub fn instruction_parser<'a>(
     raw_data: (u8, u8),
     registers: Rc<RefCell<[u8; 16]>>,
@@ -252,6 +266,7 @@ pub fn instruction_parser<'a>(
     let third_nibble = (raw_data.1 & 0xF0) >> 4;
     let fourth_nibble = raw_data.1 & 0x0F;
     match (first_nibble, second_nibble, third_nibble, fourth_nibble) {
+        (0, 0, 0xE, 0) => Box::new(CleanScreen { screen }) as Box<dyn Instruction + 'a>,
         (1, _, _, _) => Box::new(Jump {
             program_counter,
             val: ((second_nibble as u16) << 8) + (third_nibble << 4) as u16 + fourth_nibble as u16,
