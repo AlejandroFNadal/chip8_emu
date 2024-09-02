@@ -251,6 +251,24 @@ impl Instruction for CleanScreen {
     }
 }
 
+struct NoOperation {
+    first_nibble: u8,
+    second_nibble: u8,
+    third_nibble: u8,
+    fourth_nibble: u8,
+}
+
+impl Instruction for NoOperation {
+    fn to_string(&self) -> String {
+        format!(
+            "Bad Opcode? {} {} {} {}",
+            self.first_nibble, self.second_nibble, self.third_nibble, self.fourth_nibble
+        )
+    }
+    fn execute(&mut self) -> () {
+        ()
+    }
+}
 pub fn instruction_parser<'a>(
     raw_data: (u8, u8),
     registers: Rc<RefCell<[u8; 16]>>,
@@ -310,10 +328,12 @@ pub fn instruction_parser<'a>(
             let val = reg[second_nibble as usize];
             return Box::new(SetTimer { val, timer }) as Box<dyn Instruction + 'a>;
         }
-        (_, _, _, _) => panic!(
-            "Inst Unknown {} {} {} {}",
-            first_nibble, second_nibble, third_nibble, fourth_nibble
-        ),
+        (_, _, _, _) => Box::new(NoOperation {
+            first_nibble,
+            second_nibble,
+            third_nibble,
+            fourth_nibble,
+        }) as Box<dyn Instruction + 'a>,
     }
 }
 
