@@ -1,54 +1,162 @@
-use chip8_emu::instructions::{instruction_parser, Instruction};
 use log::trace;
 use std::cell::RefCell;
 use std::fs;
 use std::rc::Rc;
 extern crate env_logger;
 
+fn u8_to_8_bools(input: u8) -> [bool; 8] {
+    let mut ret = [false; 8];
+    for i in 0..8 {
+        let extracted = input & (1 << i);
+        ret[i] = extracted != 0;
+    }
+    ret.reverse();
+    ret
+}
+
 struct Chip8 {
-    registers: Rc<RefCell<[u8; 16]>>,
-    mem_addr: Rc<RefCell<u16>>, // memory address register
-    program_counter: Rc<RefCell<u16>>,
+    registers: [u8; 16],
+    mem_addr: u16, // memory address register
+    program_counter: u16,
     stack_pointer: u8,
     stack: [u16; 16],
-    screen: Rc<RefCell<[[bool; 63]; 31]>>,
-    program: Vec<Box<dyn Instruction>>,
-    ram: Rc<RefCell<[u8; 4096]>>,
-    timer: Rc<RefCell<u8>>,
+    screen: [[bool; 63]; 31],
+    ram: [u8; 4096],
+    timer: u8,
 }
 
 impl Chip8 {
     pub fn new() -> Self {
         Chip8 {
-            registers: Rc::new(RefCell::new([0; 16])),
-            mem_addr: Rc::new(RefCell::new(0)),
-            program_counter: Rc::new(RefCell::new(0)),
+            registers: [0; 16],
+            mem_addr: 0,
+            program_counter: 0,
             stack_pointer: 0,
-            stack: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            screen: Rc::new(RefCell::new([[false; 63]; 31])),
-            program: vec![],
-            ram: Rc::new(RefCell::new([0; 4096])),
-            timer: Rc::new(RefCell::new(0)),
+            stack: [0; 16],
+            screen: [[false; 63]; 31],
+            ram: [0; 4096],
+            timer: 0,
         }
     }
-    pub fn load_instructions(&self, path: String) -> Result<Vec<(u8, u8)>, std::io::Error> {
+    pub fn execute_instruction(&mut self, byte1: u8, byte2: u8) {
+        let first_nibble = (byte1 & 0xF0) >> 4;
+        let second_nibble = byte1 & 0x0F;
+        let third_nibble = (byte2 & 0xF0) >> 4;
+        let fourth_nibble = byte2 & 0x0F;
+        match (first_nibble, second_nibble, third_nibble, fourth_nibble) {
+            (0, 0, 0xE, 0) => {
+                trace!("Clearing screen");
+                self.screen = [[false; 63]; 31];
+                self.program_counter += 2;
+            }
+            (0, 0, 0xE, 0xE) => {
+                trace!("Returning from subroutine");
+                self.program_counter = self.stack[0];
+                self.stack_pointer -= 1;
+            }
+            (1, _, _, _) => {
+                trace!("Jumping to address");
+                let val = ((second_nibble as u16) << 8)
+                    + (third_nibble << 4) as u16
+                    + fourth_nibble as u16;
+                self.program_counter = val;
+            }
+            (4, _, _, _) => {
+                trace!("Skip next instruction if register is not equal to value");
+                //Jump if register not equal to value
+                let val = (third_nibble << 4) + fourth_nibble;
+                if self.registers[second_nibble as usize] != val {
+                    self.program_counter += 4
+                }
+            }
+            (5, _, _, 0) => {
+                trace!("Skip next instruction if registers are equal");
+                // jump if two registers are equal
+                let val1 = self.registers[second_nibble as usize];
+                let val2 = self.registers[third_nibble as usize];
+                if val1 == val2 {
+                    self.program_counter += 4
+                }
+            }
+            (0x6, _, _, _) => {
+                // load val into register
+                trace!("Loading value into register");
+                let target = second_nibble as usize;
+                let val = third_nibble + fourth_nibble;
+                self.registers[target] = val;
+                self.program_counter += 2;
+            }
+            (0x07, _, _, _) => {
+                // add register + val
+                trace!("Adding value to register");
+                let target = second_nibble as usize;
+                let val = third_nibble + fourth_nibble;
+                self.registers[target] += val;
+                self.program_counter += 2;
+            }
+            (0x08, _, _, 4) => {
+                // set reg x to regy
+                trace!("Setting register x to register y");
+                let xpos = second_nibble as usize;
+                let ypos = third_nibble as usize;
+                self.registers[xpos] = self.registers[ypos];
+                self.program_counter += 2;
+            }
+            (0xA, _, _, _) => {
+                // set memory pointer
+                trace!("Setting memory pointer");
+                let val: u32 = ((third_nibble << 4) + fourth_nibble).try_into().unwrap();
+                let val = (val + ((second_nibble as u32) << 8)).try_into().unwrap();
+                self.mem_addr = val;
+                self.program_counter += 2;
+            }
+            (0xD, _, _, _) => {
+                //draw
+                let x: usize = second_nibble.into();
+                let y: usize = third_nibble.into();
+                let sprite_len: usize = fourth_nibble.into();
+                let mem_pos: usize = self.mem_addr.into();
+                let sprite = &self.ram[mem_pos..mem_pos + sprite_len];
+                trace!("Drawing sprite at x: {}, y: {}, len: {}", x, y, sprite_len);
+                for elem in sprite {
+                    let mut y_shift: usize = 0;
+                    for pixel in u8_to_8_bools(*elem as u8) {
+                        // pixels are added to the screen with XOR
+                        self.screen[x as usize][y as usize + y_shift] ^= pixel;
+                        y_shift += 1;
+                    }
+                }
+                self.program_counter += 2;
+            }
+            (0xF, _, 0x1, 0x5) => {
+                trace!("Setting delay timer");
+                let val = self.registers[second_nibble as usize];
+                self.timer = val;
+                self.program_counter += 2;
+            }
+            (_, _, _, _) => {
+                trace!("Unknown instruction");
+                self.program_counter += 2;
+            }
+        }
+    }
+
+    pub fn load_instructions(&mut self, path: String) -> Result<(), std::io::Error> {
         let instructions: Vec<u8> = fs::read(path).unwrap();
-        let mut instruction_tuples: Vec<(u8, u8)> = vec![];
         let mut i = 0;
         while i < instructions.len() - 1 {
-            instruction_tuples.push((instructions[i], instructions[i + 1]));
-            i = i + 2;
+            self.ram[i] = instructions[i];
+            i = i + 1;
         }
-        Ok(instruction_tuples)
+        Ok(())
     }
     pub fn state_to_string(&self) -> String {
         format!("Regs: {:x?}", self.registers)
     }
     pub fn print_display(&self) {
-        let screen = *self.screen.borrow();
-        println!("{:?}", self.screen);
+        // println!("{:?}", self.screen);
         println!("-----------------------------------------------------------------");
-        for row in screen {
+        for row in self.screen {
             print!("|");
             for column in row {
                 if column {
@@ -67,27 +175,16 @@ impl Chip8 {
 fn main() {
     env_logger::init();
     let mut chip8 = Chip8::new();
-    {
-        // same as dropping the mutref
-        let mut test = chip8.screen.borrow_mut();
-        test[30][58] = true;
-        test[0][0] = true;
-    }
     chip8.print_display();
-    let raw_instructions = chip8
+    chip8
         .load_instructions("./roms/zero.ch8".to_string())
         .unwrap();
-    for i in 0..raw_instructions.len() {
-        chip8.program.push(instruction_parser(
-            raw_instructions[i],
-            chip8.registers.clone(),
-            chip8.mem_addr.clone(),
-            chip8.screen.clone(),
-            chip8.ram.clone(),
-            chip8.timer.clone(),
-            chip8.program_counter.clone(),
-        ));
-        println!("{}", chip8.program.last().unwrap().to_string());
+    loop {
+        let byte1 = chip8.ram[chip8.program_counter as usize];
+        let byte2 = chip8.ram[(chip8.program_counter + 1) as usize];
+        chip8.execute_instruction(byte1, byte2);
+        chip8.print_display();
+        // sleep
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    chip8.print_display();
 }
