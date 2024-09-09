@@ -55,10 +55,10 @@ impl Chip8 {
                 self.stack_pointer -= 1;
             }
             (1, _, _, _) => {
-                trace!("Jumping to address");
                 let val = ((second_nibble as u16) << 8)
                     + (third_nibble << 4) as u16
                     + fourth_nibble as u16;
+                trace!("Jumping to address {}", val);
                 self.program_counter = val;
             }
             (4, _, _, _) => {
@@ -67,6 +67,8 @@ impl Chip8 {
                 let val = (third_nibble << 4) + fourth_nibble;
                 if self.registers[second_nibble as usize] != val {
                     self.program_counter += 4
+                } else {
+                    self.program_counter += 2
                 }
             }
             (5, _, _, 0) => {
@@ -114,18 +116,33 @@ impl Chip8 {
                 //draw
                 let x: usize = second_nibble.into();
                 let y: usize = third_nibble.into();
+                let mut vx: usize = (self.registers[x] % 31) as usize;
+                let mut vy: usize = (self.registers[y] % 64) as usize;
                 let sprite_len: usize = fourth_nibble.into();
                 let mem_pos: usize = self.mem_addr.into();
                 let sprite = &self.ram[mem_pos..mem_pos + sprite_len];
-                trace!("Drawing sprite at x: {}, y: {}, len: {}", x, y, sprite_len);
+                trace!(
+                    "Drawing sprite at x: {}, y: {}, len: {}",
+                    vx,
+                    vy,
+                    sprite_len
+                );
+                let mut erased = 0;
                 for elem in sprite {
-                    let mut y_shift: usize = 0;
                     for pixel in u8_to_8_bools(*elem as u8) {
                         // pixels are added to the screen with XOR
-                        self.screen[x as usize][y as usize + y_shift] ^= pixel;
-                        y_shift += 1;
+                        if self.screen[vx as usize][vy] == true {
+                            if pixel == true {
+                                erased = 1
+                            }
+                        }
+                        self.screen[vx as usize][vy] ^= pixel;
+                        vy = ((vy + 1) % 64) as usize;
                     }
+                    vx = ((vx + 1) % 31) as usize;
+                    vy = ((vy - 8) % 64) as usize;
                 }
+                self.registers[0xF] = erased;
                 self.program_counter += 2;
             }
             (0xF, _, 0x1, 0x5) => {
@@ -145,9 +162,10 @@ impl Chip8 {
         let instructions: Vec<u8> = fs::read(path).unwrap();
         let mut i = 0;
         while i < instructions.len() - 1 {
-            self.ram[i] = instructions[i];
+            self.ram[0x200 + i] = instructions[i];
             i = i + 1;
         }
+        self.program_counter = 0x200;
         Ok(())
     }
     pub fn state_to_string(&self) -> String {
@@ -180,6 +198,7 @@ fn main() {
         .load_instructions("./roms/zero.ch8".to_string())
         .unwrap();
     loop {
+        trace!("Executing instruction at {}", chip8.program_counter);
         let byte1 = chip8.ram[chip8.program_counter as usize];
         let byte2 = chip8.ram[(chip8.program_counter + 1) as usize];
         chip8.execute_instruction(byte1, byte2);
