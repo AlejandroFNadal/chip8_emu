@@ -43,6 +43,13 @@ impl Chip8 {
         let second_nibble = byte1 & 0x0F;
         let third_nibble = (byte2 & 0xF0) >> 4;
         let fourth_nibble = byte2 & 0x0F;
+        trace!(
+            "Executing instruction: {:x?} {:x?} {:x?} {:x?}",
+            first_nibble,
+            second_nibble,
+            third_nibble,
+            fourth_nibble
+        );
         match (first_nibble, second_nibble, third_nibble, fourth_nibble) {
             (0, 0, 0xE, 0) => {
                 trace!("Clearing screen");
@@ -66,8 +73,20 @@ impl Chip8 {
                 //Jump if register not equal to value
                 let val = (third_nibble << 4) + fourth_nibble;
                 if self.registers[second_nibble as usize] != val {
+                    trace!(
+                        "Register {}: {} is not equal to {}, skipping next instruction",
+                        second_nibble,
+                        self.registers[second_nibble as usize],
+                        val
+                    );
                     self.program_counter += 4
                 } else {
+                    trace!(
+                        "Register {}: {} is equal to {}, not skipping next instruction",
+                        second_nibble,
+                        self.registers[second_nibble as usize],
+                        val
+                    );
                     self.program_counter += 2
                 }
             }
@@ -77,32 +96,64 @@ impl Chip8 {
                 let val1 = self.registers[second_nibble as usize];
                 let val2 = self.registers[third_nibble as usize];
                 if val1 == val2 {
+                    trace!("Registers are equal, skipping next instruction");
                     self.program_counter += 4
+                } else {
+                    trace!(
+                        "Registers {} and {} are not equal, not skipping next instruction",
+                        second_nibble,
+                        third_nibble
+                    );
+                    self.program_counter += 2
                 }
             }
             (0x6, _, _, _) => {
                 // load val into register
-                trace!("Loading value into register");
                 let target = second_nibble as usize;
                 let val = third_nibble + fourth_nibble;
                 self.registers[target] = val;
+                trace!("Loading value {} into register {}", val, target);
                 self.program_counter += 2;
             }
             (0x07, _, _, _) => {
                 // add register + val
-                trace!("Adding value to register");
                 let target = second_nibble as usize;
                 let val = third_nibble + fourth_nibble;
                 self.registers[target] += val;
+                trace!(
+                    "Adding value {} to register {}, new value: {}",
+                    val,
+                    target,
+                    self.registers[target]
+                );
                 self.program_counter += 2;
             }
-            (0x08, _, _, 4) => {
+            (0x08, _, _, 0) => {
                 // set reg x to regy
-                trace!("Setting register x to register y");
+                trace!(
+                    "Setting register x {}:{} to register y {}:{}",
+                    second_nibble,
+                    self.registers[second_nibble as usize],
+                    third_nibble,
+                    self.registers[third_nibble as usize]
+                );
                 let xpos = second_nibble as usize;
                 let ypos = third_nibble as usize;
                 self.registers[xpos] = self.registers[ypos];
                 self.program_counter += 2;
+            }
+            (0x08, _, _, 4) => {
+                let xpos = second_nibble as usize;
+                let ypos = third_nibble as usize;
+                let res = self.registers[xpos] + self.registers[ypos];
+                if res > 0xFF {
+                    self.registers[0xF] = 1
+                } else {
+                    self.registers[0xF] = 0
+                }
+                self.registers[xpos] = res as u8;
+                self.program_counter += 2;
+                trace!("Adding registers {} and {}, result: {}", xpos, ypos, res);
             }
             (0xA, _, _, _) => {
                 // set memory pointer
@@ -140,7 +191,7 @@ impl Chip8 {
                         vy = ((vy + 1) % 64) as usize;
                     }
                     vx = ((vx + 1) % 31) as usize;
-                    vy = ((vy - 8) % 64) as usize;
+                    vy = (self.registers[y] % 64) as usize;
                 }
                 self.registers[0xF] = erased;
                 self.program_counter += 2;
