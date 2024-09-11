@@ -234,6 +234,13 @@ impl Chip8 {
                 self.registers[second_nibble as usize] = (val as u16 * 2) as u8;
                 trace!("Left shift on register {}", second_nibble);
             }
+            (0x08, _, _, 6) => {
+                let val = self.registers[second_nibble as usize];
+                // carry bit
+                self.registers[0xF] = 0b00000001 & val;
+                self.registers[second_nibble as usize] = val >> 1;
+                trace!("Right shift on register {}", second_nibble);
+            }
             (0x09, _, _, 0) => {
                 trace!("Skip next instruction if registers are different");
                 // jump if two registers are equal
