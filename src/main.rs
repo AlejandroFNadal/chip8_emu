@@ -110,7 +110,7 @@ impl Chip8 {
             (0x6, _, _, _) => {
                 // load val into register
                 let target = second_nibble as usize;
-                let val = third_nibble + fourth_nibble;
+                let val = (third_nibble << 4) + fourth_nibble;
                 self.registers[target] = val;
                 trace!("Loading value {} into register {}", val, target);
                 self.program_counter += 2;
@@ -118,7 +118,7 @@ impl Chip8 {
             (0x07, _, _, _) => {
                 // add register + val
                 let target = second_nibble as usize;
-                let val = third_nibble + fourth_nibble;
+                let val = (third_nibble << 4) + fourth_nibble;
                 self.registers[target] += val;
                 trace!(
                     "Adding value {} to register {}, new value: {}",
@@ -145,11 +145,11 @@ impl Chip8 {
             (0x08, _, _, 4) => {
                 let xpos = second_nibble as usize;
                 let ypos = third_nibble as usize;
-                let res = self.registers[xpos] + self.registers[ypos];
+                let res: u16 = self.registers[xpos] as u16 + self.registers[ypos] as u16;
                 if res > 0xFF {
-                    self.registers[0xF] = 1
+                    self.registers[0xF] = 1;
                 } else {
-                    self.registers[0xF] = 0
+                    self.registers[0xF] = 0;
                 }
                 self.registers[xpos] = res as u8;
                 self.program_counter += 2;
@@ -157,18 +157,18 @@ impl Chip8 {
             }
             (0xA, _, _, _) => {
                 // set memory pointer
-                trace!("Setting memory pointer");
                 let val: u32 = ((third_nibble << 4) + fourth_nibble).try_into().unwrap();
                 let val = (val + ((second_nibble as u32) << 8)).try_into().unwrap();
                 self.mem_addr = val;
+                trace!("Setting memory pointer to {}", val);
                 self.program_counter += 2;
             }
             (0xD, _, _, _) => {
                 //draw
-                let x: usize = second_nibble.into();
-                let y: usize = third_nibble.into();
+                let y: usize = second_nibble.into();
+                let x: usize = third_nibble.into();
                 let mut vx: usize = (self.registers[x] % 31) as usize;
-                let mut vy: usize = (self.registers[y] % 64) as usize;
+                let mut vy: usize = (self.registers[y] % 63) as usize;
                 let sprite_len: usize = fourth_nibble.into();
                 let mem_pos: usize = self.mem_addr.into();
                 let sprite = &self.ram[mem_pos..mem_pos + sprite_len];
@@ -188,10 +188,10 @@ impl Chip8 {
                             }
                         }
                         self.screen[vx as usize][vy] ^= pixel;
-                        vy = ((vy + 1) % 64) as usize;
+                        vy = ((vy + 1) % 63) as usize;
                     }
                     vx = ((vx + 1) % 31) as usize;
-                    vy = (self.registers[y] % 64) as usize;
+                    vy = (self.registers[y] % 63) as usize;
                 }
                 self.registers[0xF] = erased;
                 self.program_counter += 2;
@@ -204,6 +204,7 @@ impl Chip8 {
             }
             (_, _, _, _) => {
                 trace!("Unknown instruction");
+                panic!("Unknown instruction");
                 self.program_counter += 2;
             }
         }
@@ -244,10 +245,11 @@ impl Chip8 {
 fn main() {
     env_logger::init();
     let mut chip8 = Chip8::new();
+    // read parameter from command line
+    let args: Vec<String> = std::env::args().collect();
+    let rom = &args[1];
     chip8.print_display();
-    chip8
-        .load_instructions("./roms/zero.ch8".to_string())
-        .unwrap();
+    chip8.load_instructions(rom.to_string()).unwrap();
     loop {
         trace!("Executing instruction at {}", chip8.program_counter);
         let byte1 = chip8.ram[chip8.program_counter as usize];
@@ -255,6 +257,6 @@ fn main() {
         chip8.execute_instruction(byte1, byte2);
         chip8.print_display();
         // sleep
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
