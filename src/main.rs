@@ -301,6 +301,24 @@ impl Chip8 {
                 let val = self.registers[second_nibble as usize];
                 self.timer = val;
             }
+            (0xF, _, 0x5, 0x5) => {
+                let mut pointer = self.mem_addr as usize;
+                let mut curr_reg = 0;
+                let lim = second_nibble;
+                for elem in self.registers {
+                    self.ram[pointer] = elem;
+                    pointer += 1;
+                    curr_reg += 1;
+                    if curr_reg > lim {
+                        break;
+                    }
+                }
+                trace!(
+                    "All registers from 0 to {} written in mem pos {}",
+                    second_nibble,
+                    self.mem_addr
+                );
+            }
             (_, _, _, _) => {
                 trace!("Unknown instruction");
                 panic!("Unknown instruction");
