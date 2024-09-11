@@ -68,6 +68,26 @@ impl Chip8 {
                 trace!("Jumping to address {}", val);
                 self.program_counter = val;
             }
+            (3, _, _, _) => {
+                let val = (third_nibble << 4) + fourth_nibble;
+                if self.registers[second_nibble as usize] == val {
+                    trace!(
+                        "Register {}: {} is equal to {}, skipping next instruction",
+                        second_nibble,
+                        self.registers[second_nibble as usize],
+                        val
+                    );
+                    self.program_counter += 4
+                } else {
+                    trace!(
+                        "Register {}: {} is different to {}, not skipping next instruction",
+                        second_nibble,
+                        self.registers[second_nibble as usize],
+                        val
+                    );
+                    self.program_counter += 2
+                }
+            }
             (4, _, _, _) => {
                 trace!("Skip next instruction if register is not equal to value");
                 //Jump if register not equal to value
