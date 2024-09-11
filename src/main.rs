@@ -68,6 +68,15 @@ impl Chip8 {
                 trace!("Jumping to address {}", val);
                 self.program_counter = val;
             }
+            (2, _, _, _) => {
+                self.stack_pointer += 1;
+                self.stack[0] = self.program_counter;
+                let val = ((second_nibble as u16) << 8)
+                    + (third_nibble << 4) as u16
+                    + fourth_nibble as u16;
+                self.program_counter = val;
+                trace!("Call subroutine ")
+            }
             (3, _, _, _) => {
                 let val = (third_nibble << 4) + fourth_nibble;
                 if self.registers[second_nibble as usize] == val {
