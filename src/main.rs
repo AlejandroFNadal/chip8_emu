@@ -138,8 +138,8 @@ impl Chip8 {
             (0x07, _, _, _) => {
                 // add register + val
                 let target = second_nibble as usize;
-                let val = (third_nibble << 4) + fourth_nibble;
-                self.registers[target] += val;
+                let val: u16 = (third_nibble << 4) as u16 + fourth_nibble as u16;
+                self.registers[target] = ((self.registers[target] as u16) + val) as u8;
                 trace!(
                     "Adding value {} to register {}, new value: {}",
                     val,
