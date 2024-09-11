@@ -165,6 +165,16 @@ impl Chip8 {
                 let ypos = third_nibble as usize;
                 self.registers[xpos] = self.registers[ypos];
             }
+            (0x08, _, _, 1) => {
+                let val1 = self.registers[second_nibble as usize];
+                let val2 = self.registers[third_nibble as usize];
+                self.registers[second_nibble as usize] = val1 | val2;
+                trace!(
+                    "Bitwise or between registers {} {}",
+                    second_nibble,
+                    third_nibble
+                );
+            }
             (0x08, _, _, 4) => {
                 let xpos = second_nibble as usize;
                 let ypos = third_nibble as usize;
