@@ -50,11 +50,11 @@ impl Chip8 {
             third_nibble,
             fourth_nibble
         );
+        self.program_counter += 2;
         match (first_nibble, second_nibble, third_nibble, fourth_nibble) {
             (0, 0, 0xE, 0) => {
                 trace!("Clearing screen");
                 self.screen = [[false; 63]; 31];
-                self.program_counter += 2;
             }
             (0, 0, 0xE, 0xE) => {
                 trace!("Returning from subroutine");
@@ -77,7 +77,7 @@ impl Chip8 {
                         self.registers[second_nibble as usize],
                         val
                     );
-                    self.program_counter += 4
+                    self.program_counter += 2
                 } else {
                     trace!(
                         "Register {}: {} is different to {}, not skipping next instruction",
@@ -85,7 +85,6 @@ impl Chip8 {
                         self.registers[second_nibble as usize],
                         val
                     );
-                    self.program_counter += 2
                 }
             }
             (4, _, _, _) => {
@@ -99,7 +98,7 @@ impl Chip8 {
                         self.registers[second_nibble as usize],
                         val
                     );
-                    self.program_counter += 4
+                    self.program_counter += 2
                 } else {
                     trace!(
                         "Register {}: {} is equal to {}, not skipping next instruction",
@@ -107,7 +106,6 @@ impl Chip8 {
                         self.registers[second_nibble as usize],
                         val
                     );
-                    self.program_counter += 2
                 }
             }
             (5, _, _, 0) => {
@@ -117,14 +115,13 @@ impl Chip8 {
                 let val2 = self.registers[third_nibble as usize];
                 if val1 == val2 {
                     trace!("Registers are equal, skipping next instruction");
-                    self.program_counter += 4
+                    self.program_counter += 2
                 } else {
                     trace!(
                         "Registers {} and {} are not equal, not skipping next instruction",
                         second_nibble,
                         third_nibble
                     );
-                    self.program_counter += 2
                 }
             }
             (0x6, _, _, _) => {
@@ -133,7 +130,6 @@ impl Chip8 {
                 let val = (third_nibble << 4) + fourth_nibble;
                 self.registers[target] = val;
                 trace!("Loading value {} into register {}", val, target);
-                self.program_counter += 2;
             }
             (0x07, _, _, _) => {
                 // add register + val
@@ -146,7 +142,6 @@ impl Chip8 {
                     target,
                     self.registers[target]
                 );
-                self.program_counter += 2;
             }
             (0x08, _, _, 0) => {
                 // set reg x to regy
@@ -160,7 +155,6 @@ impl Chip8 {
                 let xpos = second_nibble as usize;
                 let ypos = third_nibble as usize;
                 self.registers[xpos] = self.registers[ypos];
-                self.program_counter += 2;
             }
             (0x08, _, _, 4) => {
                 let xpos = second_nibble as usize;
@@ -172,8 +166,23 @@ impl Chip8 {
                     self.registers[0xF] = 0;
                 }
                 self.registers[xpos] = res as u8;
-                self.program_counter += 2;
                 trace!("Adding registers {} and {}, result: {}", xpos, ypos, res);
+            }
+            (0x09, _, _, 0) => {
+                trace!("Skip next instruction if registers are different");
+                // jump if two registers are equal
+                let val1 = self.registers[second_nibble as usize];
+                let val2 = self.registers[third_nibble as usize];
+                if val1 != val2 {
+                    trace!("Registers are different, skipping next instruction");
+                    self.program_counter += 2
+                } else {
+                    trace!(
+                        "Registers {} and {} are equal, not skipping next instruction",
+                        second_nibble,
+                        third_nibble
+                    );
+                }
             }
             (0xA, _, _, _) => {
                 // set memory pointer
@@ -181,7 +190,6 @@ impl Chip8 {
                 let val = (val + ((second_nibble as u32) << 8)).try_into().unwrap();
                 self.mem_addr = val;
                 trace!("Setting memory pointer to {}", val);
-                self.program_counter += 2;
             }
             (0xD, _, _, _) => {
                 //draw
@@ -214,13 +222,11 @@ impl Chip8 {
                     vy = (self.registers[y] % 63) as usize;
                 }
                 self.registers[0xF] = erased;
-                self.program_counter += 2;
             }
             (0xF, _, 0x1, 0x5) => {
                 trace!("Setting delay timer");
                 let val = self.registers[second_nibble as usize];
                 self.timer = val;
-                self.program_counter += 2;
             }
             (_, _, _, _) => {
                 trace!("Unknown instruction");
