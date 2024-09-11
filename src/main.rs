@@ -207,6 +207,33 @@ impl Chip8 {
                 self.registers[xpos] = res as u8;
                 trace!("Adding registers {} and {}, result: {}", xpos, ypos, res);
             }
+            (0x08, _, _, 5) => {
+                let xpos = second_nibble as usize;
+                let ypos = third_nibble as usize;
+                let vx = self.registers[xpos];
+                let vy = self.registers[ypos];
+                if vx > vy {
+                    self.registers[0xF] = 1;
+                } else {
+                    self.registers[0xF] = 0;
+                }
+                let res: u16 =
+                    (self.registers[xpos] as u16).wrapping_sub(self.registers[ypos] as u16);
+                self.registers[xpos] = res as u8;
+                trace!(
+                    "Substracting registers {} and {}, result: {}",
+                    xpos,
+                    ypos,
+                    res
+                );
+            }
+            (0x08, _, _, 0xE) => {
+                let val = self.registers[second_nibble as usize];
+                // carry bit
+                self.registers[0xF] = 0b10000000 & val;
+                self.registers[second_nibble as usize] = (val as u16 * 2) as u8;
+                trace!("Left shift on register {}", second_nibble);
+            }
             (0x09, _, _, 0) => {
                 trace!("Skip next instruction if registers are different");
                 // jump if two registers are equal
