@@ -319,10 +319,16 @@ impl Chip8 {
                     self.mem_addr
                 );
             }
+            (0xF, _, 0x6, 0x05) => {
+                for i in 0..second_nibble + 1 {
+                    let j = i as usize;
+                    self.registers[j] = self.ram[self.mem_addr as usize + j]
+                }
+                trace!("Reading all registers from 0 to {} from ram", second_nibble);
+            }
             (_, _, _, _) => {
                 trace!("Unknown instruction");
                 panic!("Unknown instruction");
-                self.program_counter += 2;
             }
         }
     }
