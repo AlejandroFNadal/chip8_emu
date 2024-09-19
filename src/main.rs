@@ -301,6 +301,18 @@ impl Chip8 {
                 let val = self.registers[second_nibble as usize];
                 self.timer = val;
             }
+            (0xF, _, 0x3, 0x3) => {
+                let b = self.registers[second_nibble as usize] / 100;
+                let c = (self.registers[second_nibble as usize] % 100) / 10;
+                let d = (self.registers[second_nibble as usize] % 100) % 10;
+                self.ram[self.mem_addr as usize] = b;
+                self.ram[self.mem_addr as usize + 1] = c;
+                self.ram[self.mem_addr as usize + 2] = d;
+                trace!(
+                    "Converting reg {} into BCD and storing it into [i..i+3]",
+                    second_nibble
+                );
+            }
             (0xF, _, 0x5, 0x5) => {
                 let mut pointer = self.mem_addr as usize;
                 let mut curr_reg = 0;
