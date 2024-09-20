@@ -5,6 +5,8 @@ use std::fs;
 use std::rc::Rc;
 extern crate env_logger;
 
+const SPRITE_LEN: u8 = 5;
+
 fn u8_to_8_bools(input: u8) -> [bool; 8] {
     let mut ret = [false; 8];
     for i in 0..8 {
@@ -24,10 +26,34 @@ struct Chip8 {
     screen: [[bool; 63]; 31],
     ram: [u8; 4096],
     timer: u8,
+    sound_timer: u8,
 }
 
 impl Chip8 {
     pub fn new() -> Self {
+        // preparing ram, setting fonts
+        let chip8_font: [u8; 5 * 0x10] = [
+            0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+            0x20, 0x60, 0x20, 0x20, 0x70, // 1
+            0xF0, 0x60, 0x20, 0x20, 0x70, // 2
+            0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+            0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+            0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+            0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+            0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+            0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+            0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+            0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+            0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+            0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+            0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+            0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+            0xF0, 0x80, 0xF0, 0x80, 0x80, // F
+        ];
+        let mut ram = [0; 4096];
+        for (i, font) in chip8_font.iter().enumerate() {
+            ram[i] = *font;
+        }
         Chip8 {
             registers: [0; 16],
             mem_addr: 0,
@@ -35,8 +61,9 @@ impl Chip8 {
             stack_pointer: 0,
             stack: [0; 16],
             screen: [[false; 63]; 31],
-            ram: [0; 4096],
+            ram,
             timer: 0,
+            sound_timer: 0,
         }
     }
     pub fn execute_instruction(&mut self, byte1: u8, byte2: u8) {
@@ -59,8 +86,10 @@ impl Chip8 {
             }
             (0, 0, 0xE, 0xE) => {
                 trace!("Returning from subroutine");
-                self.program_counter = self.stack[0];
-                self.stack_pointer -= 1;
+                self.program_counter = self.stack[self.stack_pointer as usize];
+                if self.stack_pointer > 0 {
+                    self.stack_pointer -= 1;
+                }
             }
             (1, _, _, _) => {
                 let val = ((second_nibble as u16) << 8)
@@ -70,8 +99,12 @@ impl Chip8 {
                 self.program_counter = val;
             }
             (2, _, _, _) => {
+                // when a subroutine is called, we need to know where to jump back after it ends
+                // so essentially, we store the currrent position in the stack.
+                // as you can go to a second subroutine from a first subroutine, it is handled with
+                // a stack.
                 self.stack_pointer += 1;
-                self.stack[0] = self.program_counter;
+                self.stack[self.stack_pointer as usize] = self.program_counter;
                 let val = ((second_nibble as u16) << 8)
                     + (third_nibble << 4) as u16
                     + fourth_nibble as u16;
@@ -303,14 +336,32 @@ impl Chip8 {
                 }
                 self.registers[0xF] = erased;
             }
+            (0xF, _, 0x0, 0x7) => {
+                self.registers[second_nibble as usize] = self.timer;
+                trace!("Set register {} to timer value", second_nibble);
+            }
             (0xF, _, 0x1, 0x5) => {
                 trace!("Setting delay timer");
                 let val = self.registers[second_nibble as usize];
                 self.timer = val;
             }
+            (0xF, _, 0x1, 0x8) => {
+                trace!("Setting sound delay timer");
+                let val = self.registers[second_nibble as usize];
+                self.sound_timer = val;
+            }
             (0xF, _, 0x1, 0xE) => {
                 self.mem_addr = self.mem_addr + self.registers[second_nibble as usize] as u16;
                 trace!("Incrementing I with register {}", second_nibble);
+            }
+            (0xF, _, 0x2, 0x9) => {
+                // this works because the fonts are at the beginning of ram and each character is
+                // SPRITE_LEN (5) big
+                self.mem_addr = (self.registers[second_nibble as usize] * SPRITE_LEN) as u16;
+                trace!(
+                    "Setting I to sprite for font {}",
+                    self.registers[second_nibble as usize]
+                );
             }
             (0xF, _, 0x3, 0x3) => {
                 let b = self.registers[second_nibble as usize] / 100;
@@ -357,6 +408,12 @@ impl Chip8 {
                 panic!("Unknown instruction");
             }
         }
+        if self.timer > 0 {
+            self.timer -= 1
+        }
+        if self.sound_timer > 0 {
+            self.sound_timer -= 1;
+        }
     }
 
     pub fn load_instructions(&mut self, path: String) -> Result<(), std::io::Error> {
@@ -374,7 +431,7 @@ impl Chip8 {
     }
     pub fn print_display(&self) {
         // println!("{:?}", self.screen);
-        println!("-----------------------------------------------------------------");
+        println!("-----------------------------------------------------------------\r");
         for row in self.screen {
             print!("|");
             for column in row {
@@ -385,13 +442,14 @@ impl Chip8 {
                 }
             }
             print!("|");
-            println!("");
+            println!("\r");
         }
-        println!("-----------------------------------------------------------------");
+        println!("-----------------------------------------------------------------\r");
     }
 }
 
 fn main() {
+    crossterm::terminal::enable_raw_mode();
     env_logger::init();
     let mut chip8 = Chip8::new();
     // read parameter from command line
@@ -405,7 +463,9 @@ fn main() {
         let byte2 = chip8.ram[(chip8.program_counter + 1) as usize];
         chip8.execute_instruction(byte1, byte2);
         chip8.print_display();
-        // sleep
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        // aiming for 60 frames per second, and assuming the other stuff takes no time at all
+        // 1s: 1000ms: ~17ms
+        // timers also substract at 60Hz so we discount one here for each
+        std::thread::sleep(std::time::Duration::from_millis(17));
     }
 }
