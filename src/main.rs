@@ -1,4 +1,5 @@
-use log::trace;
+use log::{error, trace};
+use rand::Rng;
 use std::cell::RefCell;
 use std::fs;
 use std::rc::Rc;
@@ -264,6 +265,12 @@ impl Chip8 {
                 self.mem_addr = val;
                 trace!("Setting memory pointer to {}", val);
             }
+            (0xC, _, _, _) => {
+                let random_num: u8 = rand::random();
+                let val: u8 = (third_nibble << 4) + fourth_nibble;
+                self.registers[second_nibble as usize] = random_num & val;
+                trace!("Setting random number to reg {} ", second_nibble);
+            }
             (0xD, _, _, _) => {
                 //draw
                 let y: usize = second_nibble.into();
@@ -300,6 +307,10 @@ impl Chip8 {
                 trace!("Setting delay timer");
                 let val = self.registers[second_nibble as usize];
                 self.timer = val;
+            }
+            (0xF, _, 0x1, 0xE) => {
+                self.mem_addr = self.mem_addr + self.registers[second_nibble as usize] as u16;
+                trace!("Incrementing I with register {}", second_nibble);
             }
             (0xF, _, 0x3, 0x3) => {
                 let b = self.registers[second_nibble as usize] / 100;
@@ -339,7 +350,10 @@ impl Chip8 {
                 trace!("Reading all registers from 0 to {} from ram", second_nibble);
             }
             (_, _, _, _) => {
-                trace!("Unknown instruction");
+                error!(
+                    "Unknown instruction {:x?} {:x?} {:x?} {:x?}",
+                    first_nibble, second_nibble, third_nibble, fourth_nibble
+                );
                 panic!("Unknown instruction");
             }
         }
