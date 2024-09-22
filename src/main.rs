@@ -1,8 +1,14 @@
-use log::{error, trace};
-use rand::Rng;
-use std::cell::RefCell;
-use std::fs;
-use std::rc::Rc;
+use crossterm::{
+    cursor,
+    event::{
+        self, poll, read, Event, KeyCode, KeyEvent, KeyEventKind, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
+    execute, queue,
+    terminal::{self, supports_keyboard_enhancement, Clear, ClearType},
+};
+use log::{error, info, trace};
+use std::{fs, io, io::stdout, io::Error, time::Duration};
 extern crate env_logger;
 
 const SPRITE_LEN: u8 = 5;
@@ -27,6 +33,7 @@ struct Chip8 {
     ram: [u8; 4096],
     timer: u8,
     sound_timer: u8,
+    keyboard: [bool; 0x10], // keys pressed or not pressed from 0 to F.
 }
 
 impl Chip8 {
@@ -64,8 +71,81 @@ impl Chip8 {
             ram,
             timer: 0,
             sound_timer: 0,
+            keyboard: [false; 0x10],
         }
     }
+
+    pub fn read_keyboard(&mut self) -> Result<Option<char>, String> {
+        let ev_option = poll(Duration::from_millis(10));
+        println!("Reading");
+        // current approach means that we can only read one keypress at a time
+        match ev_option {
+            Ok(true) => {
+                if let event::Event::Key(KeyEvent { code, kind, .. }) = read().unwrap() {
+                    println!("{:?}", kind);
+                    println!("{:?}", code);
+                    let mut is_key_pressed = false;
+                    match kind {
+                        KeyEventKind::Press => {
+                            println!("pressed");
+                            println!("{:?}", kind);
+                            is_key_pressed = true;
+                        }
+                        KeyEventKind::Repeat => {
+                            println!("repeat");
+                            println!("{:?}", kind);
+                            is_key_pressed = true;
+                        }
+                        KeyEventKind::Release => {
+                            println!("release");
+                            println!("{:?}", kind);
+                            is_key_pressed = false;
+                        }
+                    }
+                    match code {
+                        KeyCode::Char('q') => {
+                            let mut stdout = io::stdout();
+                            queue!(stdout, PopKeyboardEnhancementFlags);
+                            let _ = crossterm::terminal::disable_raw_mode();
+                            return Ok(Some('q'));
+                        }
+                        KeyCode::Char(c) => {
+                            if c.is_numeric() {
+                                self.keyboard[c.to_digit(10).unwrap() as usize] = is_key_pressed;
+                                return Ok(Some(c));
+                            } else {
+                                if c < 'A' {
+                                    return Ok(None);
+                                }
+                                if c > 'Z' && c < 'a' {
+                                    return Ok(None);
+                                }
+                                if c > 'f' {
+                                    return Ok(None);
+                                }
+                                if c.is_ascii_uppercase() {
+                                    self.keyboard[c.to_digit(16).unwrap() as usize] =
+                                        is_key_pressed;
+                                    return Ok(Some(c));
+                                } else {
+                                    self.keyboard[c.to_digit(16).unwrap() as usize] =
+                                        is_key_pressed;
+                                    return Ok(Some(c));
+                                }
+                            }
+                        }
+                        _ => return Ok(None),
+                    }
+                } else {
+                    return Err("Unknown error".to_string());
+                }
+            }
+            _ => {
+                return Ok(None);
+            }
+        }
+    }
+
     pub fn execute_instruction(&mut self, byte1: u8, byte2: u8) {
         let first_nibble = (byte1 & 0xF0) >> 4;
         let second_nibble = byte1 & 0x0F;
@@ -336,10 +416,38 @@ impl Chip8 {
                 }
                 self.registers[0xF] = erased;
             }
+            (0xE, _, 0x9, 0xE) => {
+                let val = self.registers[second_nibble as usize] as usize;
+                println!("Checking for keypress {}\r", val);
+                if self.keyboard[val] == true {
+                    self.program_counter += 2;
+                }
+            }
+            (0xE, _, 0xA, 0x1) => {
+                let val = self.registers[second_nibble as usize] as usize;
+                println!("Checking for keypress {}\r", val);
+                if self.keyboard[val] == false {
+                    self.program_counter += 2;
+                }
+            }
             (0xF, _, 0x0, 0x7) => {
                 self.registers[second_nibble as usize] = self.timer;
                 trace!("Set register {} to timer value", second_nibble);
             }
+            (0xF, _, 0x0, 0xA) => loop {
+                println!("Waiting for keypress\r");
+                let val = self.read_keyboard();
+                if val.is_ok() {
+                    let val_option = val.unwrap();
+                    if val_option.is_some() {
+                        let val_digit = val_option.unwrap().to_digit(16);
+                        if val_digit.is_some() {
+                            self.registers[second_nibble as usize] = val_digit.unwrap() as u8;
+                            break;
+                        }
+                    }
+                }
+            },
             (0xF, _, 0x1, 0x5) => {
                 trace!("Setting delay timer");
                 let val = self.registers[second_nibble as usize];
@@ -431,6 +539,8 @@ impl Chip8 {
     }
     pub fn print_display(&self) {
         // println!("{:?}", self.screen);
+        execute!(io::stdout(), Clear(ClearType::All));
+        execute!(io::stdout(), cursor::MoveTo(0, 0));
         println!("-----------------------------------------------------------------\r");
         for row in self.screen {
             print!("|");
@@ -445,11 +555,27 @@ impl Chip8 {
             println!("\r");
         }
         println!("-----------------------------------------------------------------\r");
+        execute!(io::stdout(), cursor::MoveTo(0, 80));
     }
 }
 
 fn main() {
     crossterm::terminal::enable_raw_mode();
+    let mut stdout = io::stdout();
+
+    let supports_keyboard_enhancement = matches!(
+        crossterm::terminal::supports_keyboard_enhancement(),
+        Ok(true)
+    );
+
+    if supports_keyboard_enhancement {
+        queue!(
+            stdout,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
+        );
+    } else {
+        panic!("DIE");
+    }
     env_logger::init();
     let mut chip8 = Chip8::new();
     // read parameter from command line
@@ -466,6 +592,7 @@ fn main() {
         // aiming for 60 frames per second, and assuming the other stuff takes no time at all
         // 1s: 1000ms: ~17ms
         // timers also substract at 60Hz so we discount one here for each
-        std::thread::sleep(std::time::Duration::from_millis(17));
+        //std::thread::sleep(std::time::Duration::from_millis(17));
+        chip8.read_keyboard();
     }
 }
