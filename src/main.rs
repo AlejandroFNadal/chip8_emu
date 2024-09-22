@@ -8,7 +8,12 @@ use crossterm::{
     terminal::{self, supports_keyboard_enhancement, Clear, ClearType},
 };
 use log::{error, info, trace};
-use std::{fs, io, io::stdout, io::Error, time::Duration};
+use std::{
+    fs,
+    io::{self, stdout, Error},
+    time::Duration,
+    usize,
+};
 extern crate env_logger;
 
 const SPRITE_LEN: u8 = 5;
@@ -34,6 +39,7 @@ struct Chip8 {
     timer: u8,
     sound_timer: u8,
     keyboard: [bool; 0x10], // keys pressed or not pressed from 0 to F.
+    draw_screen: bool,
 }
 
 impl Chip8 {
@@ -72,33 +78,25 @@ impl Chip8 {
             timer: 0,
             sound_timer: 0,
             keyboard: [false; 0x10],
+            draw_screen: false,
         }
     }
 
     pub fn read_keyboard(&mut self) -> Result<Option<char>, String> {
         let ev_option = poll(Duration::from_millis(10));
-        println!("Reading");
         // current approach means that we can only read one keypress at a time
         match ev_option {
             Ok(true) => {
                 if let event::Event::Key(KeyEvent { code, kind, .. }) = read().unwrap() {
-                    println!("{:?}", kind);
-                    println!("{:?}", code);
                     let mut is_key_pressed = false;
                     match kind {
                         KeyEventKind::Press => {
-                            println!("pressed");
-                            println!("{:?}", kind);
                             is_key_pressed = true;
                         }
                         KeyEventKind::Repeat => {
-                            println!("repeat");
-                            println!("{:?}", kind);
                             is_key_pressed = true;
                         }
                         KeyEventKind::Release => {
-                            println!("release");
-                            println!("{:?}", kind);
                             is_key_pressed = false;
                         }
                     }
@@ -267,9 +265,9 @@ impl Chip8 {
                 );
             }
             (0x08, _, _, 0) => {
-                // set reg x to regy
+                // set reg x to the value of reg y
                 trace!(
-                    "Setting register x {}:{} to register y {}:{}",
+                    "Setting register x {}:{} to the value of register y {}:{}",
                     second_nibble,
                     self.registers[second_nibble as usize],
                     third_nibble,
@@ -341,19 +339,31 @@ impl Chip8 {
                     res
                 );
             }
-            (0x08, _, _, 0xE) => {
-                let val = self.registers[second_nibble as usize];
-                // carry bit
-                self.registers[0xF] = 0b10000000 & val;
-                self.registers[second_nibble as usize] = (val as u16 * 2) as u8;
-                trace!("Left shift on register {}", second_nibble);
-            }
             (0x08, _, _, 6) => {
                 let val = self.registers[second_nibble as usize];
                 // carry bit
                 self.registers[0xF] = 0b00000001 & val;
                 self.registers[second_nibble as usize] = val >> 1;
                 trace!("Right shift on register {}", second_nibble);
+            }
+            (0x08, _, _, 0x7) => {
+                // if Vx < Vy, there will be no borrow, the operation negates this borrow in the
+                // carry bit
+                if self.registers[second_nibble as usize] < self.registers[third_nibble as usize] {
+                    self.registers[0xF] = 1; // no borrow required
+                } else {
+                    self.registers[0xF] = 1
+                }
+                self.registers[second_nibble as usize] = self.registers[third_nibble as usize]
+                    .wrapping_sub(self.registers[second_nibble as usize]);
+                trace!("")
+            }
+            (0x08, _, _, 0xE) => {
+                let val = self.registers[second_nibble as usize];
+                // carry bit
+                self.registers[0xF] = 0b10000000 & val;
+                self.registers[second_nibble as usize] = (val as u16 * 2) as u8;
+                trace!("Left shift on register {}", second_nibble);
             }
             (0x09, _, _, 0) => {
                 trace!("Skip next instruction if registers are different");
@@ -377,6 +387,12 @@ impl Chip8 {
                 let val = (val + ((second_nibble as u32) << 8)).try_into().unwrap();
                 self.mem_addr = val;
                 trace!("Setting memory pointer to {}", val);
+            }
+            (0xB, _, _, _) => {
+                let val: u32 = ((third_nibble << 4) + fourth_nibble).try_into().unwrap();
+                let val: u16 = (val + ((second_nibble as u32) << 8)).try_into().unwrap();
+                self.program_counter = val + self.registers[0] as u16;
+                trace!("Jump to location n n n + reg 0");
             }
             (0xC, _, _, _) => {
                 let random_num: u8 = rand::random();
@@ -415,6 +431,7 @@ impl Chip8 {
                     vy = (self.registers[y] % 63) as usize;
                 }
                 self.registers[0xF] = erased;
+                self.draw_screen = true;
             }
             (0xE, _, 0x9, 0xE) => {
                 let val = self.registers[second_nibble as usize] as usize;
@@ -555,7 +572,6 @@ impl Chip8 {
             println!("\r");
         }
         println!("-----------------------------------------------------------------\r");
-        execute!(io::stdout(), cursor::MoveTo(0, 80));
     }
 }
 
@@ -583,12 +599,16 @@ fn main() {
     let rom = &args[1];
     chip8.print_display();
     chip8.load_instructions(rom.to_string()).unwrap();
+    let mut i = 0;
     loop {
         trace!("Executing instruction at {}", chip8.program_counter);
         let byte1 = chip8.ram[chip8.program_counter as usize];
         let byte2 = chip8.ram[(chip8.program_counter + 1) as usize];
         chip8.execute_instruction(byte1, byte2);
-        chip8.print_display();
+        if chip8.draw_screen {
+            chip8.print_display();
+            chip8.draw_screen = false;
+        }
         // aiming for 60 frames per second, and assuming the other stuff takes no time at all
         // 1s: 1000ms: ~17ms
         // timers also substract at 60Hz so we discount one here for each
