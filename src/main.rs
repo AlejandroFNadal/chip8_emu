@@ -83,7 +83,7 @@ impl Chip8 {
     }
 
     pub fn read_keyboard(&mut self) -> Result<Option<char>, String> {
-        let ev_option = poll(Duration::from_millis(10));
+        let ev_option = poll(Duration::from_millis(1));
         // current approach means that we can only read one keypress at a time
         match ev_option {
             Ok(true) => {
